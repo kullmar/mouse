@@ -5,6 +5,11 @@ import csv
 import statistics
 import tkinter as tk
 import threading
+import random
+import logging
+from scipy import stats
+import matplotlib as plt
+import numpy as np
 
 
 class MouseEvent(Enum):
@@ -71,24 +76,25 @@ class MouseRecorder:
 class ClickAnalyzer:
     def __init__(self, csvfile_path):
         self.file_path = csvfile_path
-        self.left_click_durations_ms = []
+        self.mouse_press_dist = None
+        self.time_between_click_dist = None
 
     def analyze(self):
         with open(self.file_path, newline='') as csvfile:
             csv_reader = csv.reader(csvfile)
             next(csv_reader)
-            d = analyze_mouse_press_duration(csv_reader)
-            print('Mouse press duration: ', d)
+            self.mouse_press_dist = analyze_mouse_press_duration(csv_reader)
             csvfile.seek(0)
             next(csv_reader)
-            c = analyze_time_between_clicks(csv_reader)
-            print('Time between clicks: ', c)
+            self.time_between_click_dist = analyze_time_between_clicks(csv_reader)
+            print('Mouse press dist: ', self.mouse_press_dist)
+            print('Sleep dist: ', self.time_between_click_dist)
 
 
 def analyze_mouse_press_duration(csv_reader):
     durations = extract_mouse_press_durations(csv_reader)
 
-    return statistics.NormalDist.from_samples(durations)
+    return stats.gamma.fit(durations)
 
 
 def extract_mouse_press_durations(csv_reader):
@@ -128,8 +134,7 @@ def analyze_time_between_clicks(csv_reader):
                 times.append(tm - previous)
             previous = tm
 
-
-    return statistics.NormalDist.from_samples(times)
+    return stats.gamma.fit(times)
 
 
 class Application(tk.Frame):
@@ -174,7 +179,16 @@ class AutoClicker:
 
         self.is_running = True
         while self.is_running:
-
+            click_duration = stats.gamma.rvs(self.mouse_press_dist[0], loc=self.mouse_press_dist[1],
+                                             scale=self.mouse_press_dist[2])
+            sleep_time = stats.gamma.rvs(self.time_between_click_dist[0], loc=self.time_between_click_dist[1],
+                                         scale=self.time_between_click_dist[2])
+            print('Left mouse down')
+            mouse.press(Button.left)
+            time.sleep(click_duration)
+            print('Left mouse up')
+            print('Sleeping for ', sleep_time, ' seconds')
+            time.sleep(sleep_time)
 
 
 # Press the green button in the gutter to run the script.
@@ -184,5 +198,10 @@ if __name__ == '__main__':
     # app.mainloop()
     analyzer = ClickAnalyzer('mouse-recording.csv')
     analyzer.analyze()
+    fig, ax = plt.subplots(1, 1)
+    x = l
+    y1 = stats.gamma.pdf()
+    # autoclicker = AutoClicker(analyzer.mouse_press_dist, analyzer.time_between_click_dist)
+    # autoclicker.start()
     # recorder = MouseRecorder()
     # recorder.start()
