@@ -1,12 +1,15 @@
 import csv
+import ctypes
+import logging
+import random
 import threading
 import time
 import tkinter as tk
-import ctypes
-import logging
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import Enum, auto
 
+import pyautogui
+import win32gui
 from pynput.mouse import Listener, Button, Controller
 from scipy import stats
 
@@ -148,6 +151,7 @@ class Application(tk.Frame):
         analyzer = ClickAnalyzer('mouse_recording.csv')
         analyzer.analyze()
         self.auto_alcher = AutoAlcher(Mouse(), analyzer.time_between_click_dist)
+        self.bot = Bot()
 
     def create_widgets(self):
         self.record_button = tk.Button(self)
@@ -202,10 +206,11 @@ class Script(ABC):
 
 class AutoAlcher(Script):
     class State(Enum):
-        CLICK_SPELL = 1
-        CLICK_ITEM = 2
-        IDLE = 3
-        STOPPED = 4
+        CLICK_SPELL = auto()
+        CLICK_ITEM = auto()
+        SHORT_IDLE = auto()
+        LONG_IDLE = auto()
+        STOPPED = auto()
 
     def __init__(self, mouse, time_between_click_dist):
         super().__init__("Auto Alcher")
@@ -215,20 +220,62 @@ class AutoAlcher(Script):
         self.current_state = self.State.STOPPED
         self.mouse = mouse
         self.previous_animation_started_at = None
+        self.alchemy_image = './images/high_level_alchemy.png'
+        self.item_image = './images/maple_longbow.png'
 
     def run(self):
         logging.info('Starting auto alcher')
         self.is_running = True
+        self.set_state(self.State.CLICK_SPELL)
         while self.is_running:
             if not is_runelite_in_foreground():
                 logging.info('RuneLite not in foreground. Sleeping for 5 sec')
-                self.set_state(self.State.STOPPED)
                 time.sleep(5)
             else:
-                self.click()
-                self.short_idle()
-                self.click()
-                self.long_idle()
+                self.act()
+
+    def act(self):
+        if self.current_state == self.State.CLICK_SPELL:
+            locate_tries = 0
+            spell_pos = None
+            t1 = time.perf_counter()
+            while not spell_pos and locate_tries < 5:
+                try:
+                    logging.debug('Attempting to locate high alchemy spell..')
+                    spell_pos = pyautogui.locateOnScreen(self.alchemy_image)
+                except pyautogui.ImageNotFoundException:
+                    logging.debug(f'Failed to locate! Attempt no. {locate_tries}')
+                    locate_tries += 1
+                    time.sleep(random.random())
+            if spell_pos:
+                delta = time.perf_counter() - t1
+                logging.debug(f'Located spell after {delta} sec')
+                if self.mouse.is_inside(spell_pos):
+                    self.mouse.click()
+                    self.long_idle()
+                    self.set_state(self.State.CLICK_ITEM)
+
+        elif self.current_state == self.State.CLICK_ITEM:
+            locate_tries = 0
+            spell_pos = None
+            t1 = time.perf_counter()
+            while not spell_pos and locate_tries < 5:
+                try:
+                    logging.debug('Attempting to locate item in inventory..')
+                    spell_pos = pyautogui.locateOnScreen(self.item_image)
+                except pyautogui.ImageNotFoundException:
+                    locate_tries += 1
+                    time.sleep(random.random())
+            if spell_pos:
+                delta = time.perf_counter() - t1
+                logging.debug(f'Located item after {delta} sec')
+                if self.mouse.is_inside(spell_pos):
+                    self.mouse.click()
+                    self.long_idle()
+                    self.set_state(self.State.CLICK_SPELL)
+
+        else:
+            raise RuntimeError("Invalid state")
 
     def stop(self):
         self.is_running = False
@@ -247,14 +294,6 @@ class AutoAlcher(Script):
 
     def long_idle(self):
         a, loc, beta = self.time_between_click_dist[1]
-        sleep_time = stats.gamma.rvs(a, loc=loc, scale=beta)
-        logging.debug(f'Idling for {sleep_time} sec')
-        time.sleep(sleep_time)
-
-    def idle(self):
-        idx = 1 if self.current_state == self.State.CLICK_ITEM else 0
-        self.set_state(self.State.IDLE)
-        a, loc, beta = self.time_between_click_dist[idx]
         sleep_time = stats.gamma.rvs(a, loc=loc, scale=beta)
         logging.debug(f'Idling for {sleep_time} sec')
         time.sleep(sleep_time)
@@ -304,12 +343,31 @@ class Mouse:
     def move_to(self, x, y):
         pass
 
+    def get_position(self):
+        return self.controller.position[0], self.controller.position[1]
+
+    def is_inside(self, rect):
+        x, y = self.get_position()
+        return rect[0] <= x <= rect[0] + rect[2] \
+               and rect[1] <= y <= rect[1] + rect[3]
+
 
 class Bot:
+
     def __init__(self):
         self.active_script = None
         self.runelite_client = None
         self.mouse = Mouse()
+        threading.Thread(target=self.init_runelite_info).start()
+
+    def init_runelite_info(self):
+        logging.info('Trying to find RuneLite..')
+        hwnd = win32gui.FindWindow(None, 'RuneLite')
+        while not hwnd:
+            time.sleep(1)
+            hwnd = win32gui.FindWindow(None, 'RuneLite')
+        logging.info('Runelite found!')
+        self.runelite_client = {'hwnd': hwnd, 'rect': win32gui.GetWindowRect(hwnd)}
 
     def start_script(self):
         if self.active_script:
