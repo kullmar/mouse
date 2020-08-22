@@ -128,9 +128,9 @@ def analyze_time_between_clicks(csv_reader):
         previous_mouse_press_time = tm
         row = find_next_row_with_event(csv_reader, MouseEvent.LEFT_MOUSE_PRESSED)
 
-    item_click_times = times[::2]
-    spell_click_times = times[1::2]
-    return stats.gamma.fit(item_click_times), stats.gamma.fit(spell_click_times)
+    short_pauses = times[::2]
+    long_pauses = times[1::2]
+    return stats.gamma.fit(short_pauses), stats.gamma.fit(long_pauses)
 
 
 def find_next_row_with_event(csv_reader, event):
@@ -222,57 +222,66 @@ class AutoAlcher(Script):
         self.previous_animation_started_at = None
         self.alchemy_image = './images/high_level_alchemy.png'
         self.item_image = './images/maple_longbow.png'
+        self.alchemy_rect = None
+        self.item_rect = None
 
     def run(self):
         logging.info('Starting auto alcher')
         self.is_running = True
         self.set_state(self.State.CLICK_SPELL)
         while self.is_running:
-            if not is_runelite_in_foreground():
-                logging.info('RuneLite not in foreground. Sleeping for 5 sec')
-                time.sleep(5)
-            else:
-                self.act()
+            # if not is_runelite_in_foreground():
+            #     logging.info('RuneLite not in foreground. Sleeping for 5 sec')
+            #     time.sleep(5)
+            # else:
+            self.act()
 
     def act(self):
         if self.current_state == self.State.CLICK_SPELL:
-            locate_tries = 0
-            spell_pos = None
-            t1 = time.perf_counter()
-            while not spell_pos and locate_tries < 5:
-                try:
-                    logging.debug('Attempting to locate high alchemy spell..')
-                    spell_pos = pyautogui.locateOnScreen(self.alchemy_image)
-                except pyautogui.ImageNotFoundException:
+            if not self.alchemy_rect:
+                t1 = time.perf_counter()
+                logging.debug('Attempting to locate spell..')
+                self.alchemy_rect = pyautogui.locateOnScreen(self.alchemy_image, grayscale=True, confidence=0.8,
+                                                             region=(1500, 600, 500, 500))
+                locate_tries = 1
+                while not self.alchemy_rect and locate_tries < 5:
                     logging.debug(f'Failed to locate! Attempt no. {locate_tries}')
-                    locate_tries += 1
                     time.sleep(random.random())
-            if spell_pos:
-                delta = time.perf_counter() - t1
-                logging.debug(f'Located spell after {delta} sec')
-                if self.mouse.is_inside(spell_pos):
-                    self.mouse.click()
-                    self.long_idle()
-                    self.set_state(self.State.CLICK_ITEM)
+                    self.alchemy_rect = pyautogui.locateOnScreen(self.alchemy_image, grayscale=True, confidence=0.8,
+                                                                 region=(1500, 600, 500, 500))
+                    locate_tries += 1
+
+                if self.alchemy_rect:
+                    delta = time.perf_counter() - t1
+                    logging.debug(f'Located spell in {delta} sec')
+
+            if self.alchemy_rect and self.mouse.is_inside(self.alchemy_rect):
+                self.mouse.click()
+                self.short_idle()
+                self.set_state(self.State.CLICK_ITEM)
 
         elif self.current_state == self.State.CLICK_ITEM:
-            locate_tries = 0
-            spell_pos = None
-            t1 = time.perf_counter()
-            while not spell_pos and locate_tries < 5:
-                try:
-                    logging.debug('Attempting to locate item in inventory..')
-                    spell_pos = pyautogui.locateOnScreen(self.item_image)
-                except pyautogui.ImageNotFoundException:
-                    locate_tries += 1
+            if not self.item_rect:
+                t1 = time.perf_counter()
+                logging.debug('Attempting to locate item in inventory..')
+                self.item_rect = pyautogui.locateOnScreen(self.item_image, grayscale=True, confidence=0.7,
+                                                          region=(1500, 600, 500, 500))
+                locate_tries = 1
+                while not self.item_rect and locate_tries <= 5:
+                    logging.debug(f'Failed to locate! Attempt no. {locate_tries}')
                     time.sleep(random.random())
-            if spell_pos:
-                delta = time.perf_counter() - t1
-                logging.debug(f'Located item after {delta} sec')
-                if self.mouse.is_inside(spell_pos):
-                    self.mouse.click()
-                    self.long_idle()
-                    self.set_state(self.State.CLICK_SPELL)
+                    self.item_rect = pyautogui.locateOnScreen(self.item_image, grayscale=True, confidence=0.7,
+                                                              region=(1500, 600, 500, 500))
+                    locate_tries += 1
+
+                if self.item_rect:
+                    delta = time.perf_counter() - t1
+                    logging.debug(f'Located item in {delta} sec')
+
+            if self.item_rect and self.mouse.is_inside(self.item_rect):
+                self.mouse.click()
+                self.long_idle()
+                self.set_state(self.State.CLICK_SPELL)
 
         else:
             raise RuntimeError("Invalid state")
@@ -362,10 +371,11 @@ class Bot:
 
     def init_runelite_info(self):
         logging.info('Trying to find RuneLite..')
-        hwnd = win32gui.FindWindow(None, 'RuneLite')
+        window_title = 'RuneLite - megacrank'
+        hwnd = win32gui.FindWindow(None, window_title)
         while not hwnd:
             time.sleep(1)
-            hwnd = win32gui.FindWindow(None, 'RuneLite')
+            hwnd = win32gui.FindWindow(None, window_title)
         logging.info('Runelite found!')
         self.runelite_client = {'hwnd': hwnd, 'rect': win32gui.GetWindowRect(hwnd)}
 
