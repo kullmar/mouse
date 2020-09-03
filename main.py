@@ -5,6 +5,7 @@ import random
 import threading
 import time
 import tkinter as tk
+import datetime
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 
@@ -12,7 +13,7 @@ import pyautogui
 import win32gui
 from pynput.mouse import Listener, Button, Controller
 from scipy import stats
-
+from datetime import datetime, timedelta
 
 class MouseEvent(Enum):
     MOVED = 1
@@ -224,62 +225,42 @@ class AutoAlcher(Script):
         self.item_image = './images/maple_longbow.png'
         self.alchemy_rect = None
         self.item_rect = None
+        self.next_break_time = None
 
     def run(self):
         logging.info('Starting auto alcher')
         self.is_running = True
         self.set_state(self.State.CLICK_SPELL)
+        self.update_next_break_time()
         while self.is_running:
-            # if not is_runelite_in_foreground():
-            #     logging.info('RuneLite not in foreground. Sleeping for 5 sec')
-            #     time.sleep(5)
-            # else:
+            if datetime.now() > self.next_break_time:
+                sleep_time = random.randint(20, 3*60)
+                logging.info(f'Antiban - sleeping for {sleep_time} sec')
+                time.sleep(sleep_time)
+                self.update_next_break_time()
             self.act()
+
+
+    def update_next_break_time(self):
+        self.next_break_time = datetime.now() + timedelta(seconds=random.randint(5 * 60, 15 * 60))
+        logging.info(f'Antiban - next break in {self.next_break_time - datetime.now()}')
 
     def act(self):
         if self.current_state == self.State.CLICK_SPELL:
             if not self.alchemy_rect:
-                t1 = time.perf_counter()
-                logging.debug('Attempting to locate spell..')
-                self.alchemy_rect = pyautogui.locateOnScreen(self.alchemy_image, grayscale=True, confidence=0.8,
-                                                             region=(1500, 600, 500, 500))
-                locate_tries = 1
-                while not self.alchemy_rect and locate_tries < 5:
-                    logging.debug(f'Failed to locate! Attempt no. {locate_tries}')
-                    time.sleep(random.random())
-                    self.alchemy_rect = pyautogui.locateOnScreen(self.alchemy_image, grayscale=True, confidence=0.8,
-                                                                 region=(1500, 600, 500, 500))
-                    locate_tries += 1
-
-                if self.alchemy_rect:
-                    delta = time.perf_counter() - t1
-                    logging.debug(f'Located spell in {delta} sec')
+                self.alchemy_rect = locate_image(self.alchemy_image)
 
             if self.alchemy_rect and self.mouse.is_inside(self.alchemy_rect):
-                self.mouse.click()
+                self.click()
                 self.short_idle()
                 self.set_state(self.State.CLICK_ITEM)
 
         elif self.current_state == self.State.CLICK_ITEM:
             if not self.item_rect:
-                t1 = time.perf_counter()
-                logging.debug('Attempting to locate item in inventory..')
-                self.item_rect = pyautogui.locateOnScreen(self.item_image, grayscale=True, confidence=0.7,
-                                                          region=(1500, 600, 500, 500))
-                locate_tries = 1
-                while not self.item_rect and locate_tries <= 5:
-                    logging.debug(f'Failed to locate! Attempt no. {locate_tries}')
-                    time.sleep(random.random())
-                    self.item_rect = pyautogui.locateOnScreen(self.item_image, grayscale=True, confidence=0.7,
-                                                              region=(1500, 600, 500, 500))
-                    locate_tries += 1
-
-                if self.item_rect:
-                    delta = time.perf_counter() - t1
-                    logging.debug(f'Located item in {delta} sec')
+                self.item_rect = locate_image(self.item_image)
 
             if self.item_rect and self.mouse.is_inside(self.item_rect):
-                self.mouse.click()
+                self.click()
                 self.long_idle()
                 self.set_state(self.State.CLICK_SPELL)
 
@@ -311,6 +292,26 @@ class AutoAlcher(Script):
         if state != self.current_state:
             self.current_state = state
             logging.debug(f'New state: {state.name}')
+
+
+def locate_image(image, tries=5):
+    t1 = time.perf_counter()
+    logging.debug('Attempting to locate image on screen..')
+    rect = pyautogui.locateOnScreen(image, grayscale=True, confidence=0.7,
+                                    region=(1500, 600, 500, 500))
+    locate_tries = 1
+    while not rect and locate_tries <= tries:
+        logging.debug(f'Failed to locate! Attempt no. {locate_tries}')
+        time.sleep(random.random())
+        rect = pyautogui.locateOnScreen(image, grayscale=True, confidence=0.7,
+                                        region=(1500, 600, 500, 500))
+        locate_tries += 1
+
+    if rect:
+        delta = time.perf_counter() - t1
+        logging.debug(f'Located item in {delta} sec')
+
+    return rect
 
 
 def focus_window(name):
